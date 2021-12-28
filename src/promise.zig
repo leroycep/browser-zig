@@ -1,5 +1,5 @@
 const Allocator = @import("std").mem.Allocator;
-const handle_free = @import("./main.zig").handle_free;
+const handle_free = @import("./main.zig").handle.handle_free;
 
 pub const PromiseRaw = opaque {
     pub extern fn promise_new(ExecuteFn, CleanupFn, userdata: ?*anyopaque) *@This();

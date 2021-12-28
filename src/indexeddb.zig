@@ -1,7 +1,7 @@
 const std = @import("std");
 const Object = @import("./main.zig").Object;
 const Array = @import("./main.zig").Array;
-const handle_free = @import("./main.zig").handle_free;
+const handle_free = @import("./main.zig").handle.handle_free;
 
 pub const IndexedDB = opaque {
     pub extern "indexeddb" fn indexeddb_open(namePtr: [*]const u8, nameLen: usize, version: u32, callbacks: *const OpenCallbacks, userdata: ?*anyopaque) void;

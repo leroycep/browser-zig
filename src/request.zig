@@ -1,6 +1,6 @@
 const ReadableStream = @import("./main.zig").ReadableStream;
-const handle_free = @import("./main.zig").handle_free;
-const handle_clone = @import("./main.zig").handle_clone;
+const handle_free = @import("./main.zig").handle.handle_free;
+const handle_clone = @import("./main.zig").handle.handle_clone;
 
 pub const Request = opaque {
     pub extern fn request_method(*@This()) u32;

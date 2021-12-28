@@ -1,56 +1,47 @@
-let memory = new WebAssembly.Memory({ initial: 16 });
+let next_handle = 4000;
+let handles = {};
+let child_handles = {};
 
-function getWASMImports(memoryPromise, instanceExportsPromise) {
-  let memory = null;
-  let instanceExports = null;
+function makeHandle(obj, parentHandle) {
+  const handle = next_handle;
+  next_handle += 4;
+  handles[handle] = obj;
 
-  memoryPromise.then((mem) => {
-    memory = mem;
-  });
-  instanceExportsPromise.then((exports) => {
-    instanceExports = exports;
-  });
+  if (parentHandle) {
+    if (child_handles[parentHandle]) {
+      child_handles[parentHandle].push(handle);
+    } else {
+      child_handles[parentHandle] = [handle];
+    }
+  }
 
-  let next_handle = 4000;
-  let handles = {};
-  let child_handles = {};
+  return handle;
+}
 
-  const makeHandle = (obj, parentHandle) => {
-    const handle = next_handle;
-    next_handle += 4;
-    handles[handle] = obj;
-
-    if (parentHandle) {
-      if (child_handles[parentHandle]) {
-        child_handles[parentHandle].push(handle);
-      } else {
-        child_handles[parentHandle] = [handle];
+function freeHandle(handle) {
+  let handles_to_free = [handle];
+  let to_free_index = 0;
+  while (to_free_index < handles_to_free.length) {
+    const h = handles_to_free[to_free_index];
+    if (child_handles[h]) {
+      for (let child of child_handles[h]) {
+        handles_to_free.push(child);
       }
     }
+    delete child_handles[h];
+    to_free_index += 1;
+  }
+  for (let h of handles_to_free) {
+    delete handles[h];
+  }
+}
 
-    return handle;
-  };
-  const freeHandle = (handle) => {
-    let handles_to_free = [handle];
-    let to_free_index = 0;
-    while (to_free_index < handles_to_free.length) {
-      const h = handles_to_free[to_free_index];
-      if (child_handles[h]) {
-        for (let child of child_handles[h]) {
-          handles_to_free.push(child);
-        }
-      }
-      delete child_handles[h];
-      to_free_index += 1;
-    }
-    for (let h of handles_to_free) {
-      delete handles[h];
-    }
-  };
+function getWASMImports(getInstanceExports, mixins) {
+  let getMem = () => getInstanceExports().memory;
 
   const text_decoder = new TextDecoder();
   function readStr(ptr, len) {
-    const array = new Uint8Array(memory.buffer, ptr, len);
+    const array = new Uint8Array(getMem().buffer, ptr, len);
     return text_decoder.decode(array);
   }
   const text_encoder = new TextEncoder();
@@ -64,7 +55,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
 
   return {
     env: {
-      memory: memory,
+      ...(mixins.env ? mixins.env : {}),
 
       handle_free: freeHandle,
       handle_clone(handle) {
@@ -108,7 +99,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
       request_url: (handle, bufPtr, bufLen) => {
         const request = handles[handle];
 
-        const buf = new Uint8Array(memory.buffer, bufPtr, bufLen);
+        const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
 
         const res = text_encoder.encodeInto(request.url, buf);
 
@@ -145,30 +136,28 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
       ) => {
         const request = handles[handle];
         request.arrayBuffer().then((arrayBuffer) => {
-          const buf = new Uint8Array(memory.buffer, bufPtr, bufLen);
+          const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
           buf.set(new Uint8Array(arrayBuffer));
-          return moduleReady.then((instanceExports) => {
-            const cb_fn =
-              instanceExports.__indirect_function_table.get(resumeReadCb);
-            cb_fn(userdata, true, arrayBuffer.byteLength);
-          });
+
+          const cb_fn =
+            getInstanceExports().__indirect_function_table.get(resumeReadCb);
+
+          cb_fn(userdata, true, arrayBuffer.byteLength);
         });
       },
 
       set_timeout: (cbFnIndex, duration_ms) => {
         setTimeout(() => {
-          moduleReady.then((instanceExports) => {
-            const cb_fn =
-              instanceExports.__indirect_function_table.get(cbFnIndex);
-            cb_fn();
-          });
+          const cb_fn =
+            getInstanceExports.__indirect_function_table.get(cbFnIndex);
+          cb_fn();
         }, duration_ms);
       },
 
       blob_new: (mimeTypePtr, mimeTypeLen, bodyPtr, bodyLen) => {
         const mime_type = readStr(mimeTypePtr, mimeTypeLen);
 
-        const body = new Uint8Array(memory.buffer, bodyPtr, bodyLen);
+        const body = new Uint8Array(getMem().buffer, bodyPtr, bodyLen);
 
         return makeHandle(new Blob([body], { type: mime_type }));
       },
@@ -230,7 +219,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
         const object = handles[handle];
         const name = readStr(namePtr, nameLen);
 
-        const buf = new Uint8Array(memory.buffer, bufPtr, bufLen);
+        const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
 
         const res = text_encoder.encodeInto(object[name], buf);
 
@@ -252,11 +241,11 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
           new Promise((resolve, reject) => {
             const resolverHandle = makeHandle({ resolve, reject });
             const resume =
-              instanceExports.__indirect_function_table.get(resumeFn);
+              getInstanceExports().__indirect_function_table.get(resumeFn);
             resume(userdata, resolverHandle);
           }).finally(() => {
             const cleanup =
-              instanceExports.__indirect_function_table.get(cleanupFn);
+              getInstanceExports().__indirect_function_table.get(cleanupFn);
             cleanup(userdata);
           })
         );
@@ -284,11 +273,13 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
     },
 
     indexeddb: {
+      ...(mixins.indexeddb ? mixins.indexeddb : {}),
+
       indexeddb_open(namePtr, nameLen, version, callbacksPtr, userdata) {
         const name = readStr(namePtr, nameLen);
 
         const callbacks_dataview = new Uint32Array(
-          memory.buffer,
+          getMem().buffer,
           callbacksPtr,
           4
         );
@@ -305,7 +296,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
         openRequest.onsuccess = (event) => {
           if (already_opened) throw new Error("Already opened");
           already_opened = true;
-          const success_cb = instanceExports.__indirect_function_table.get(
+          const success_cb = getInstanceExports().__indirect_function_table.get(
             callbacks.success
           );
 
@@ -313,7 +304,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
           success_cb(userdata, db_handle);
         };
         openRequest.onupgradeneeded = (event) => {
-          const upgrade_cb = instanceExports.__indirect_function_table.get(
+          const upgrade_cb = getInstanceExports().__indirect_function_table.get(
             callbacks.upgradeneeded
           );
 
@@ -322,13 +313,13 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
           freeHandle(db_handle);
         };
         openRequest.onerror = (event) => {
-          instanceExports.__indirect_function_table.get(callbacks.error)(
+          getInstanceExports().__indirect_function_table.get(callbacks.error)(
             userdata,
             0
           );
         };
         openRequest.onblocked = (event) => {
-          instanceExports.__indirect_function_table.get(callbacks.blocked)(
+          getInstanceExports().__indirect_function_table.get(callbacks.blocked)(
             userdata
           );
         };
@@ -344,7 +335,11 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
 
         const name = readStr(namePtr, nameLen);
 
-        const options_dataview = new Uint32Array(memory.buffer, optionsPtr, 3);
+        const options_dataview = new Uint32Array(
+          getMem().buffer,
+          optionsPtr,
+          3
+        );
         const options = {
           keyPath: options_dataview[0]
             ? readStr(options_dataview[0], options_dataview[1])
@@ -380,7 +375,11 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
           }
         };
 
-        const options_dataview = new Uint32Array(memory.buffer, optionsPtr, 3);
+        const options_dataview = new Uint32Array(
+          getMem().buffer,
+          optionsPtr,
+          3
+        );
         const mode = int_to_mode(options_dataview[0]);
         const options = {
           durability: int_to_durability(options_dataview[1]),
@@ -429,11 +428,11 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
         const objectStore = handles[objectStoreHandle];
 
         const key = JSON.parse(readStr(keyJSONPtr, keyJSONLen));
-        const valBuf = new Uint8Array(memory.buffer, valBufPtr, valBufLen);
+        const valBuf = new Uint8Array(getMem().buffer, valBufPtr, valBufLen);
         const onsuccess =
-          instanceExports.__indirect_function_table.get(onsuccessFn);
+          getInstanceExports().__indirect_function_table.get(onsuccessFn);
         const onerror =
-          instanceExports.__indirect_function_table.get(onerrorFn);
+          getInstanceExports().__indirect_function_table.get(onerrorFn);
 
         const ERROR_UNKNOWN = 1;
         const ERROR_OUT_OF_MEMORY = 10;
@@ -463,7 +462,7 @@ function getWASMImports(memoryPromise, instanceExportsPromise) {
         request.onsuccess = (event) => {
           const cursor = event.target.result;
           const success_cb =
-            instanceExports.__indirect_function_table.get(successCbIdx);
+            getInstanceExports().__indirect_function_table.get(successCbIdx);
           if (cursor) {
             const cursor_handle = makeHandle(cursor);
             const value_handle = makeHandle(cursor.value, cursor_handle);
