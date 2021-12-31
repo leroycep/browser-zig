@@ -110,6 +110,20 @@ export function getWASMImports(getInstanceExports, mixins) {
         return res.written;
       },
 
+      request_referrer(requestHandle, bufPtr, bufLen) {
+        const request = handles[requestHandle];
+
+        const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
+
+        const res = text_encoder.encodeInto(request.referrer, buf);
+
+        if (res.read < request.referrer.length) {
+          return -res.written;
+        }
+
+        return res.written;
+      },
+
       request_body_open: (handle) => {
         //console.log("request body open", handle);
         //const request = handles[handle];

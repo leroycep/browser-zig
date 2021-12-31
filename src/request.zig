@@ -5,6 +5,7 @@ const handle_clone = @import("./main.zig").handle.handle_clone;
 pub const Request = opaque {
     pub extern fn request_method(*@This()) u32;
     pub extern fn request_url(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
+    pub extern fn request_referrer(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
     pub extern fn request_body_open(*@This()) *ReadableStream;
 
     pub const Method = enum(u32) {
@@ -23,6 +24,16 @@ pub const Request = opaque {
     pub fn url(this: *@This(), buf: []u8) ![]u8 {
         const len = request_url(this, buf.ptr, buf.len);
         if (len < 0) {
+            return error.OutOfMemory;
+        }
+        return buf[0..@intCast(usize, len)];
+    }
+
+    pub fn referrer(this: *@This(), buf: []u8) !?[]u8 {
+        const len = this.request_referrer(buf.ptr, buf.len);
+        if (len == 0) {
+            return null;
+        } else if (len < 0) {
             return error.OutOfMemory;
         }
         return buf[0..@intCast(usize, len)];
