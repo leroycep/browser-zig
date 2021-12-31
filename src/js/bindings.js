@@ -2,7 +2,7 @@ let next_handle = 4000;
 let handles = {};
 let child_handles = {};
 
-function makeHandle(obj, parentHandle) {
+export function makeHandle(obj, parentHandle) {
   const handle = next_handle;
   next_handle += 4;
   handles[handle] = obj;
@@ -18,7 +18,7 @@ function makeHandle(obj, parentHandle) {
   return handle;
 }
 
-function freeHandle(handle) {
+export function freeHandle(handle) {
   let handles_to_free = [handle];
   let to_free_index = 0;
   while (to_free_index < handles_to_free.length) {
@@ -36,7 +36,7 @@ function freeHandle(handle) {
   }
 }
 
-function getWASMImports(getInstanceExports, mixins) {
+export function getWASMImports(getInstanceExports, mixins) {
   let getMem = () => getInstanceExports().memory;
 
   const text_decoder = new TextDecoder();
