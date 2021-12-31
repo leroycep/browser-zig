@@ -86,10 +86,7 @@ pub const PromiseRaw = opaque {
                         resolver.resolveVoid();
                     },
                     .Pointer => {
-                        const result = @call(.{}, executorFn, this.args) catch |err| {
-                            resolver.reject(@errorName(err));
-                            return;
-                        };
+                        const result = @call(.{}, executorFn, this.args);
                         resolver.resolveAnyHandle(result);
                     },
                     .ErrorUnion => |eu| switch (@typeInfo(eu.payload)) {
