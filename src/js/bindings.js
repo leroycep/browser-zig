@@ -124,6 +124,11 @@ export function getWASMImports(getInstanceExports, mixins) {
         return res.written;
       },
 
+      request_headers(requestHandle) {
+        const request = handles[requestHandle];
+        return makeHandle(request.headers);
+      },
+
       request_body_open: (handle) => {
         //console.log("request body open", handle);
         //const request = handles[handle];
@@ -283,6 +288,27 @@ export function getWASMImports(getInstanceExports, mixins) {
         const reason = readStr(reasonPtr, reasonLen);
         reject(reason);
         freeHandle(rejectHandle);
+      },
+
+      headers_get(headersHandle, headerNamePtr, headerNameLen, bufPtr, bufLen) {
+        const headers = handles[headersHandle];
+        const header_name = readStr(headerNamePtr, headerNameLen);
+
+        const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
+
+        const header = headers.get(header_name);
+
+        if (header === null) {
+          return 0;
+        }
+
+        const res = text_encoder.encodeInto(header, buf);
+
+        if (res.read < header.length) {
+          return -res.written;
+        }
+
+        return res.written;
       },
     },
 
