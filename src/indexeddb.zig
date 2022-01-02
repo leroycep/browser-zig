@@ -2,6 +2,7 @@ const std = @import("std");
 const Object = @import("./main.zig").Object;
 const Array = @import("./main.zig").Array;
 const handle_free = @import("./main.zig").handle.handle_free;
+const jserr = @import("./errors.zig");
 
 pub const IndexedDB = opaque {
     pub extern "indexeddb" fn indexeddb_open(namePtr: [*]const u8, nameLen: usize, version: u32, callbacks: *const OpenCallbacks, userdata: ?*anyopaque) void;
@@ -98,6 +99,40 @@ pub const IndexedDB = opaque {
         InvalidAccess,
     };
 
+    /// [createIndex documentation][] by [Mozilla Contributors][] is licensed under [CC-BY-SA 2.5][].
+    ///
+    /// [createIndex documentation]: https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/createIndex
+    /// [Mozilla Contributors]: https://developer.mozilla.org/en-US/docs/MDN/About/contributors.txt
+    /// [CC-BY-SA 2.5]: https://creativecommons.org/licenses/by-sa/2.5/
+    pub const CreateIndexError = error{
+        /// Thrown if an index with the same name already exists in the
+        /// database. Index names are case-sensitive.
+        Constraint,
+
+        /// Thrown if the provided key path is a sequence, and multiEntry
+        /// is set to true in the objectParameters object.
+        InvalidAccess,
+
+        /// Thrown if:
+        ///
+        /// - The method was not called from a versionchange transaction mode
+        ///   callback, i.e. from inside a IDBOpenDBRequest.onupgradeneeded handler.
+        /// - The object store has been deleted.
+        InvalidState,
+
+        /// Thrown if the provided keyPath is not a [valid key path][].
+        ///
+        /// [valid key path]: https://www.w3.org/TR/IndexedDB/#dfn-valid-key-path
+        Syntax,
+
+        /// Thrown if the transaction this IDBObjectStore belongs to is not active (e.g. has been deleted or
+        /// removed.) In Firefox previous to version 41, an `InvalidStateError` was raised in this case as
+        /// well, which was misleading; this has now been fixed (see [bug 1176165][].)
+        ///
+        /// [bug 1176165]: https://bugzilla.mozilla.org/show_bug.cgi?id=1176165
+        TransactionInactive,
+    };
+
     pub fn createObjectStore(this: *@This(), name: []const u8, options: ObjectStoreOptions) CreateObjectStoreError!*ObjectStore {
         const options_packed = ObjectStoreOptionsPacked{
             .keyPathPtr = if (options.keyPath) |k| k.ptr else null,
@@ -120,11 +155,66 @@ pub const IndexedDB = opaque {
         pub extern "indexeddb" fn object_store_add(this: *@This(), value: *Object) void;
         pub extern "indexeddb" fn object_store_add_json(this: *@This(), valJSONPtr: [*]const u8, valJSONLen: usize) void;
         pub extern "indexeddb" fn object_store_put(this: *@This(), value: *Object) void;
-        pub extern "indexeddb" fn object_store_get_json(this: *@This(), GetJSONSuccessFn, GetJSONErrorFn, userdata: ?*anyopaque, key: [*]const u8, usize, val: [*]u8, usize) void;
-        pub extern "indexeddb" fn object_store_open_cursor(this: *@This(), fn (?*anyopaque, ?*Object, ?*Cursor.Handle) callconv(.C) void, *anyopaque) void;
+        pub extern "indexeddb" fn object_store_get(this: *@This(), GetSuccessFn, GetErrorFn, userdata: ?*anyopaque, keyJSON: [*]const u8, usize) void;
+        //pub extern "indexeddb" fn object_store_get_json(this: *@This(), GetJSONSuccessFn, GetJSONErrorFn, userdata: ?*anyopaque, key: [*]const u8, usize, val: [*]u8, usize) void;
+        pub extern "indexeddb" fn object_store_open_cursor(this: *@This(), ?*Object, direction: u32, fn (?*anyopaque, ?*Object, ?*Object, ?*Cursor.Handle) callconv(.C) void, *anyopaque) void;
+        pub extern "indexeddb" fn object_store_open_key_cursor(this: *@This(), ?*Object, direction: u32, fn (?*anyopaque, ?*Object, ?*Object, ?*Cursor.Handle) callconv(.C) void, *anyopaque) void;
+        pub extern "indexeddb" fn object_store_create_index(this: *@This(), namePtr: [*]const u8, nameLen: usize, keyPathPtr: [*]const u8, keyPathLen: usize, objJSONPtr: ?[*]const u8, objJSONLen: usize) i32;
 
-        pub const GetJSONSuccessFn = fn (userdata: ?*anyopaque, bytesWritten: usize) callconv(.C) void;
-        pub const GetJSONErrorFn = fn (userdata: ?*anyopaque, errcode: u32) callconv(.C) void;
+        pub const GetSuccessFn = fn (userdata: ?*anyopaque, object: ?*Object) callconv(.C) void;
+        pub const GetErrorFn = fn (userdata: ?*anyopaque, errcode: u32) callconv(.C) void;
+
+        pub const CreateIndexOptions = struct {
+            unique: ?bool = null,
+            multiEntry: ?bool = null,
+            locale: ?[]const u8 = null,
+
+            pub fn isDefault(this: @This()) bool {
+                return this.unique == null and this.multiEntry == null and this.locale == null;
+            }
+        };
+
+        pub fn createIndex(this: *@This(), name: []const u8, keyPath: []const u8, options: CreateIndexOptions) !*Index {
+            std.log.debug("{s}:{} createIndex", .{ @src().file, @src().line });
+            if (!options.isDefault()) {
+                var json_buf: [100]u8 = undefined;
+                var json_fbs = std.io.fixedBufferStream(&json_buf);
+                std.json.stringify(
+                    options,
+                    .{ .emit_null_optional_fields = false },
+                    json_fbs.writer(),
+                ) catch |e| {
+                    std.log.debug("{s}:{} {}", .{ @src().file, @src().line, e });
+                    unreachable;
+                };
+                const json = json_fbs.getWritten();
+
+                std.log.debug("{s}:{} json = {s}", .{ @src().file, @src().line, json });
+                const handle = try jserr.errcodeMaybe(this.object_store_create_index(
+                    name.ptr,
+                    name.len,
+                    keyPath.ptr,
+                    keyPath.len,
+                    json.ptr,
+                    json.len,
+                ));
+
+                return @intToPtr(*Index, @intCast(u32, handle));
+            } else {
+                std.log.debug("{s}:{} createIndex", .{ @src().file, @src().line });
+                const handle = try jserr.errcodeMaybe(this.object_store_create_index(
+                    name.ptr,
+                    name.len,
+                    keyPath.ptr,
+                    keyPath.len,
+                    null,
+                    0,
+                ));
+
+                std.log.debug("{s}:{} handle = {x}", .{ @src().file, @src().line, handle });
+                return @intToPtr(*Index, @intCast(u32, handle));
+            }
+        }
 
         pub fn add(this: *@This(), value: *Object) void {
             return this.object_store_add(value);
@@ -135,21 +225,21 @@ pub const IndexedDB = opaque {
         }
 
         pub fn put(this: *@This(), value: *Object) void {
-            return this.object_store_add_json(value);
+            return this.object_store_put(value);
         }
 
-        const GetJSONData = struct {
+        const GetData = struct {
             frame: anyframe,
             returnedData: union(enum) {
                 uninit: void,
-                success: struct { bytesWritten: usize },
+                success: struct { object: ?*Object },
                 failure: struct { errcode: u32 },
             },
 
-            fn onsuccess(userdata: ?*anyopaque, bytesWritten: usize) callconv(.C) void {
+            fn onsuccess(userdata: ?*anyopaque, object: ?*Object) callconv(.C) void {
                 const this = @ptrCast(*@This(), @alignCast(@alignOf(@This()), userdata.?));
                 this.returnedData = .{
-                    .success = .{ .bytesWritten = bytesWritten },
+                    .success = .{ .object = object },
                 };
                 resume this.frame;
             }
@@ -163,53 +253,57 @@ pub const IndexedDB = opaque {
             }
         };
 
-        const ERROR_OUT_OF_MEMORY = 10;
-        const ERROR_TRANSACTION_INACTIVE = 11;
-        const ERROR_DATA = 12;
-        const ERROR_INVALID_STATE = 13;
-
         /// Get a JSON string with a JSON key
-        pub fn getJSON(this: *@This(), keyJSON: []const u8, valJSONBuf: []u8) !?[]u8 {
-            var data = GetJSONData{
+        pub fn get(this: *@This(), keyJSON: []const u8) !?*Object {
+            var data = GetData{
                 .frame = @frame(),
                 .returnedData = .uninit,
             };
             suspend {
-                this.object_store_get_json(
-                    GetJSONData.onsuccess,
-                    GetJSONData.onerror,
+                this.object_store_get(
+                    GetData.onsuccess,
+                    GetData.onerror,
                     &data,
                     keyJSON.ptr,
                     keyJSON.len,
-                    valJSONBuf.ptr,
-                    valJSONBuf.len,
                 );
             }
             switch (data.returnedData) {
                 .uninit => unreachable,
-                .success => |s| return valJSONBuf[0..s.bytesWritten],
-                .failure => |f| switch (f.errcode) {
-                    ERROR_DATA, ERROR_INVALID_STATE => return null,
-                    ERROR_OUT_OF_MEMORY => return error.OutOfMemory,
-                    ERROR_TRANSACTION_INACTIVE => return error.TransactionInactive,
+                .success => |s| return s.object,
+                .failure => |f| switch (jserr.errcodeToError(f.errcode)) {
+                    error.Data, error.InvalidState => return null,
+                    error.OutOfMemory, error.TransactionInactive => |e| return e,
                     else => unreachable,
                 },
             }
         }
 
-        pub fn openCursor(this: *@This(), cursor: *Cursor) void {
+        pub fn openCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
             cursor.* = Cursor{
                 .frame = @frame(),
                 .state = .uninit,
             };
             suspend {
-                this.object_store_open_cursor(Cursor.success, cursor);
+                this.object_store_open_cursor(query, @enumToInt(direction), Cursor.success, cursor);
+            }
+        }
+
+        pub fn openKeyCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
+            cursor.* = Cursor{
+                .frame = @frame(),
+                .state = .uninit,
+            };
+            suspend {
+                this.object_store_open_key_cursor(query, @enumToInt(direction), Cursor.success, cursor);
             }
         }
     };
 
+    pub const Index = opaque {};
+
     pub const Transaction = opaque {
-        pub extern "indexeddb" fn transaction_free(this: *@This()) void;
+        pub extern "indexeddb" fn transaction_abort(this: *@This()) void;
         pub extern "indexeddb" fn transaction_object_store(this: *@This(), namePtr: [*]const u8, nameLen: usize) *ObjectStore;
 
         pub const Options = packed struct {
@@ -229,7 +323,11 @@ pub const IndexedDB = opaque {
         };
 
         pub fn free(this: *@This()) void {
-            this.transaction_free();
+            handle_free(this);
+        }
+
+        pub fn abort(this: *@This()) void {
+            this.transaction_abort();
         }
 
         pub fn objectStore(this: *@This(), name: []const u8) *ObjectStore {
@@ -246,13 +344,32 @@ pub const IndexedDB = opaque {
             pub extern "indexeddb" fn cursor_get_key_u32(this: *@This()) u32;
         };
 
-        fn success(userdata: ?*anyopaque, nextValue: ?*Object, newHandle: ?*Handle) callconv(.C) void {
-            const this = @ptrCast(*@This(), @alignCast(@alignOf(@This()), userdata.?));
-            std.debug.assert((nextValue != null) == (newHandle != null));
+        pub const KeyRange = opaque {
+            pub fn asObject(this: *@This()) *Object {
+                return @ptrCast(*Object, this);
+            }
+        };
 
-            if (nextValue) |val| {
+        pub const Direction = enum(u8) {
+            next = 0,
+            nextunique = 1,
+            prev = 2,
+            prevunique = 3,
+        };
+
+        fn success(
+            userdata: ?*anyopaque,
+            nextKey: ?*Object,
+            nextValue: ?*Object,
+            newHandle: ?*Handle,
+        ) callconv(.C) void {
+            const this = @ptrCast(*@This(), @alignCast(@alignOf(@This()), userdata.?));
+            std.debug.assert((nextKey != null) == (newHandle != null));
+
+            if (nextKey) |key| {
                 this.state = .{ .going = .{
-                    .value = val,
+                    .key = key,
+                    .value = nextValue,
                     .handle = newHandle.?,
                 } };
             } else {
@@ -264,13 +381,19 @@ pub const IndexedDB = opaque {
         const State = union(enum) {
             uninit: void,
             going: struct {
-                value: *Object,
+                key: *Object,
+                value: ?*Object,
                 handle: *Cursor.Handle,
             },
             done: void,
         };
 
-        pub fn next(this: *@This()) ?*Object {
+        const Entry = struct {
+            key: *Object,
+            value: ?*Object,
+        };
+
+        pub fn next(this: *@This()) ?Entry {
             this.frame = @frame();
             switch (this.state) {
                 .uninit => unreachable,
@@ -283,7 +406,7 @@ pub const IndexedDB = opaque {
             }
             switch (this.state) {
                 .uninit => return null,
-                .going => |g| return g.value,
+                .going => |g| return Entry{ .key = g.key, .value = g.value },
                 .done => return null,
             }
         }

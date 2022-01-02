@@ -46,10 +46,25 @@ export function getWASMImports(getInstanceExports, mixins) {
   }
   const text_encoder = new TextEncoder();
 
+  function writeStr(ptr, len, text) {
+    const buf = new Uint8Array(getMem().buffer, ptr, len);
+
+    const res = text_encoder.encodeInto(text, buf);
+
+    if (res.read < text.length) {
+      return -res.written;
+    }
+
+    return res.written;
+  }
+
   const METHOD = {
     GET: 1,
     POST: 2,
   };
+
+  const ERROR_UNKNOWN = 1;
+  const ERROR_OUT_OF_MEMORY = 10;
 
   let console_string = "";
 
@@ -228,6 +243,12 @@ export function getWASMImports(getInstanceExports, mixins) {
         object[name] = handles[objHandle];
       },
 
+      object_set_json(handle, namePtr, nameLen, jsonPtr, jsonLen) {
+        const object = handles[handle];
+        const name = readStr(namePtr, nameLen);
+        object[name] = JSON.parse(readStr(jsonPtr, jsonLen));
+      },
+
       object_get_bool(handle, namePtr, nameLen) {
         const object = handles[handle];
         const name = readStr(namePtr, nameLen);
@@ -237,22 +258,24 @@ export function getWASMImports(getInstanceExports, mixins) {
       object_get_str(handle, namePtr, nameLen, bufPtr, bufLen) {
         const object = handles[handle];
         const name = readStr(namePtr, nameLen);
-
-        const buf = new Uint8Array(getMem().buffer, bufPtr, bufLen);
-
-        const res = text_encoder.encodeInto(object[name], buf);
-
-        if (res.read < object[name].length) {
-          return -res.written;
-        }
-
-        return res.written;
+        return writeStr(bufPtr, bufLen, object[name]);
       },
 
       object_get_obj(handle, namePtr, nameLen) {
         const object = handles[handle];
         const name = readStr(namePtr, nameLen);
         return makeHandle(object[name], handle);
+      },
+
+      object_as_str(handle, bufPtr, bufLen) {
+        const object = handles[handle];
+        return writeStr(bufPtr, bufLen, object);
+      },
+
+      object_as_i64(handle) {
+        const object = handles[handle];
+        console.log(object);
+        return Number(object);
       },
 
       promise_new(resumeFn, cleanupFn, userdata) {
@@ -309,6 +332,14 @@ export function getWASMImports(getInstanceExports, mixins) {
         }
 
         return res.written;
+      },
+
+      date_now() {
+        return BigInt(Date.now());
+      },
+
+      math_random() {
+        return Math.random();
       },
     },
 
@@ -428,7 +459,10 @@ export function getWASMImports(getInstanceExports, mixins) {
         return makeHandle(db.transaction(storeNames, mode, options), dbHandle);
       },
 
-      transaction_free: freeHandle,
+      transaction_abort(transactionHandle, namePtr, nameLen) {
+        const transaction = handles[transactionHandle];
+        transaction.abort();
+      },
 
       transaction_object_store(transactionHandle, namePtr, nameLen) {
         const transaction = handles[transactionHandle];
@@ -474,9 +508,6 @@ export function getWASMImports(getInstanceExports, mixins) {
         const onerror =
           getInstanceExports().__indirect_function_table.get(onerrorFn);
 
-        const ERROR_UNKNOWN = 1;
-        const ERROR_OUT_OF_MEMORY = 10;
-
         const req = objectStore.get(key);
         req.onsuccess = () => {
           const val_json = JSON.stringify(req.result);
@@ -496,21 +527,91 @@ export function getWASMImports(getInstanceExports, mixins) {
         };
       },
 
-      object_store_open_cursor(objectStoreHandle, successCbIdx, userdata) {
+      object_store_get(
+        objectStoreHandle,
+        onsuccessFn,
+        onerrorFn,
+        userdata,
+        keyJSONPtr,
+        keyJSONLen
+      ) {
         const objectStore = handles[objectStoreHandle];
-        const request = objectStore.openCursor();
-        request.onsuccess = (event) => {
-          const cursor = event.target.result;
-          const success_cb =
-            getInstanceExports().__indirect_function_table.get(successCbIdx);
-          if (cursor) {
-            const cursor_handle = makeHandle(cursor);
-            const value_handle = makeHandle(cursor.value, cursor_handle);
-            success_cb(userdata, value_handle, cursor_handle);
-          } else {
-            success_cb(userdata, null, null);
-          }
+
+        const keyJSON = readStr(keyJSONPtr, keyJSONLen);
+        const key = JSON.parse(keyJSON);
+        const onsuccess =
+          getInstanceExports().__indirect_function_table.get(onsuccessFn);
+        const onerror =
+          getInstanceExports().__indirect_function_table.get(onerrorFn);
+
+        const req = objectStore.get(key);
+        req.onsuccess = () => {
+          onsuccess(userdata, req.result ? makeHandle(req.result) : 0);
         };
+        req.onerror = (e) => {
+          console.log(e);
+          onerror(userdata, ERROR_UNKNOWN);
+        };
+      },
+
+      object_store_open_cursor(
+        objectStoreHandle,
+        queryHandle,
+        directionInt,
+        successCbIdx,
+        userdata
+      ) {
+        object_store_open_cursor_fn(
+          getInstanceExports(),
+          false,
+          objectStoreHandle,
+          queryHandle,
+          directionInt,
+          successCbIdx,
+          userdata
+        );
+      },
+
+      object_store_open_key_cursor(
+        objectStoreHandle,
+        queryHandle,
+        directionInt,
+        successCbIdx,
+        userdata
+      ) {
+        object_store_open_cursor_fn(
+          getInstanceExports(),
+          true,
+          objectStoreHandle,
+          queryHandle,
+          directionInt,
+          successCbIdx,
+          userdata
+        );
+      },
+
+      object_store_create_index(
+        objectStoreHandle,
+        namePtr,
+        nameLen,
+        keyPathPtr,
+        keyPathLen,
+        objJSONPtr,
+        objJSONLen
+      ) {
+        const objectStore = handles[objectStoreHandle];
+        const name = readStr(namePtr, nameLen);
+        const keyPath = readStr(keyPathPtr, keyPathLen);
+
+        const options = objJSONPtr
+          ? JSON.parse(readStr(objJSONPtr, objJSONLen))
+          : {};
+
+        // TODO: Wrap in try/catch block
+        return makeHandle(
+          objectStore.createIndex(name, keyPath, options),
+          objectStoreHandle
+        );
       },
 
       cursor_continue(cursorHandle) {
@@ -523,5 +624,52 @@ export function getWASMImports(getInstanceExports, mixins) {
         return handles[cursorHandle].key;
       },
     },
+  };
+}
+
+function object_store_open_cursor_fn(
+  instanceExports,
+  isKeyCursor,
+  objectStoreHandle,
+  queryHandle,
+  directionInt,
+  successCbIdx,
+  userdata
+) {
+  const objectStore = handles[objectStoreHandle];
+  const query = queryHandle === 0 ? handles[queryHandle] : null;
+
+  const directionIntToString = (x) => {
+    switch (x) {
+      case 0:
+        return "next";
+      case 1:
+        return "nextunique";
+      case 2:
+        return "prev";
+      case 3:
+        return "prevunique";
+    }
+  };
+  const dir = directionIntToString(directionInt);
+
+  const request = isKeyCursor
+    ? objectStore.openKeyCursor(query, dir)
+    : objectStore.openCursor(query, dir);
+
+  request.onsuccess = (event) => {
+    const cursor = event.target.result;
+    const success_cb =
+      instanceExports.__indirect_function_table.get(successCbIdx);
+    if (cursor) {
+      const cursor_handle = makeHandle(cursor);
+      const key_handle = makeHandle(cursor.key, cursor_handle);
+      const value_handle = cursor.value
+        ? makeHandle(cursor.value, cursor_handle)
+        : null;
+      success_cb(userdata, key_handle, value_handle, cursor_handle);
+    } else {
+      success_cb(userdata, null, null, null);
+    }
   };
 }
