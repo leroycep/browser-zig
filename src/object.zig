@@ -14,6 +14,7 @@ pub const Object = opaque {
 
     pub extern fn object_as_i64(*@This()) i64;
     pub extern fn object_as_str(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
+    pub extern fn object_as_json(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
 
     pub fn new() *@This() {
         return object_new();
@@ -55,6 +56,12 @@ pub const Object = opaque {
 
     pub fn asStr(this: *@This(), buf: []u8) ![]u8 {
         const len = this.object_as_str(buf.ptr, buf.len);
+        if (len < 0) return error.OutOfMemory;
+        return buf[0..@intCast(usize, len)];
+    }
+
+    pub fn asJSON(this: *@This(), buf: []u8) ![]u8 {
+        const len = this.object_as_json(buf.ptr, buf.len);
         if (len < 0) return error.OutOfMemory;
         return buf[0..@intCast(usize, len)];
     }
