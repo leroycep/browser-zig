@@ -262,7 +262,7 @@ export function getWASMImports(getInstanceExports, mixins) {
         return writeStr(bufPtr, bufLen, object[name]);
       },
 
-      object_get_obj(handle, namePtr, nameLen) {
+      object_get_object(handle, namePtr, nameLen) {
         const object = handles[handle];
         const name = readStr(namePtr, nameLen);
         return makeHandle(object[name], handle);
@@ -271,6 +271,12 @@ export function getWASMImports(getInstanceExports, mixins) {
       object_as_str(handle, bufPtr, bufLen) {
         const object = handles[handle];
         return writeStr(bufPtr, bufLen, object);
+      },
+
+      object_as_json(handle, bufPtr, bufLen) {
+        const object = handles[handle];
+        const json = JSON.stringify(object);
+        return writeStr(bufPtr, bufLen, json);
       },
 
       object_as_i64(handle) {
