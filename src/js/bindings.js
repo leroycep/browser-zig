@@ -281,7 +281,6 @@ export function getWASMImports(getInstanceExports, mixins) {
 
       object_as_i64(handle) {
         const object = handles[handle];
-        console.log(object);
         return Number(object);
       },
 
@@ -424,8 +423,6 @@ export function getWASMImports(getInstanceExports, mixins) {
             : null,
           autoIncrement: options_dataview[2] > 0,
         };
-
-        console.log("createObjectStore", name, options);
 
         return makeHandle(db.createObjectStore(name, options), dbHandle);
       },
@@ -620,12 +617,10 @@ export function getWASMImports(getInstanceExports, mixins) {
 
       cursor_request_init(cursorRequestHandle, successCbIdx, userdata) {
         const cursor_request = handles[cursorRequestHandle];
-        console.log(cursor_request);
         cursor_request.onsuccess = (event) => {
           const new_cursor = event.target.result;
           const success_cb =
             getInstanceExports().__indirect_function_table.get(successCbIdx);
-          console.log(new_cursor);
           if (new_cursor) {
             const new_cursor_handle = makeHandle(new_cursor);
             const key_handle = makeHandle(new_cursor.key, new_cursor_handle);
@@ -673,7 +668,7 @@ function object_store_open_cursor_fn(
   directionInt
 ) {
   const objectStore = handles[objectStoreHandle];
-  const query = queryHandle === 0 ? handles[queryHandle] : null;
+  const query = queryHandle !== 0 ? handles[queryHandle] : null;
   const dir = directionIntToString(directionInt);
 
   const request = isKeyCursor
@@ -681,7 +676,6 @@ function object_store_open_cursor_fn(
     : objectStore.openCursor(query, dir);
 
   const cursor_request_handle = makeHandle(request, objectStoreHandle);
-  console.log(cursor_request_handle, request);
 
   return cursor_request_handle;
 }
