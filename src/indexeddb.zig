@@ -157,9 +157,10 @@ pub const IndexedDB = opaque {
         pub extern "indexeddb" fn object_store_put(this: *@This(), value: *Object) void;
         pub extern "indexeddb" fn object_store_get(this: *@This(), GetSuccessFn, GetErrorFn, userdata: ?*anyopaque, keyJSON: [*]const u8, usize) void;
         //pub extern "indexeddb" fn object_store_get_json(this: *@This(), GetJSONSuccessFn, GetJSONErrorFn, userdata: ?*anyopaque, key: [*]const u8, usize, val: [*]u8, usize) void;
-        pub extern "indexeddb" fn object_store_open_cursor(this: *@This(), ?*Object, direction: u32, fn (?*anyopaque, ?*Object, ?*Object, ?*Cursor.Handle) callconv(.C) void, *anyopaque) void;
-        pub extern "indexeddb" fn object_store_open_key_cursor(this: *@This(), ?*Object, direction: u32, fn (?*anyopaque, ?*Object, ?*Object, ?*Cursor.Handle) callconv(.C) void, *anyopaque) void;
+        pub extern "indexeddb" fn object_store_open_cursor(this: *@This(), ?*Object, direction: u32) *Cursor.RequestHandle;
+        pub extern "indexeddb" fn object_store_open_key_cursor(this: *@This(), ?*Object, direction: u32) *Cursor.RequestHandle;
         pub extern "indexeddb" fn object_store_create_index(this: *@This(), namePtr: [*]const u8, nameLen: usize, keyPathPtr: [*]const u8, keyPathLen: usize, objJSONPtr: ?[*]const u8, objJSONLen: usize) i32;
+        pub extern "indexeddb" fn object_store_index(this: *@This(), namePtr: [*]const u8, nameLen: usize) ?*Index;
 
         pub const GetSuccessFn = fn (userdata: ?*anyopaque, object: ?*Object) callconv(.C) void;
         pub const GetErrorFn = fn (userdata: ?*anyopaque, errcode: u32) callconv(.C) void;
@@ -214,6 +215,10 @@ pub const IndexedDB = opaque {
                 std.log.debug("{s}:{} handle = {x}", .{ @src().file, @src().line, handle });
                 return @intToPtr(*Index, @intCast(u32, handle));
             }
+        }
+
+        pub fn index(this: *@This(), name: []const u8) ?*Index {
+            return this.object_store_index(name.ptr, name.len);
         }
 
         pub fn add(this: *@This(), value: *Object) void {
@@ -280,27 +285,40 @@ pub const IndexedDB = opaque {
         }
 
         pub fn openCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
-            cursor.* = Cursor{
-                .frame = @frame(),
-                .state = .uninit,
+            cursor.* = .{
+                .frame = undefined,
+                .state = .{ .uninit = this.object_store_open_cursor(query, @enumToInt(direction)) },
             };
-            suspend {
-                this.object_store_open_cursor(query, @enumToInt(direction), Cursor.success, cursor);
-            }
         }
 
         pub fn openKeyCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
-            cursor.* = Cursor{
-                .frame = @frame(),
-                .state = .uninit,
+            cursor.* = .{
+                .frame = undefined,
+                .state = .{ .uninit = this.object_store_open_key_cursor(query, @enumToInt(direction)) },
             };
-            suspend {
-                this.object_store_open_key_cursor(query, @enumToInt(direction), Cursor.success, cursor);
-            }
         }
     };
 
-    pub const Index = opaque {};
+    pub const Index = opaque {
+        pub fn openCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
+            const obj_store = @ptrCast(*ObjectStore, this);
+            const handle = obj_store.object_store_open_cursor(query, @enumToInt(direction));
+            std.log.debug("handle {*}", .{handle});
+            cursor.* = .{
+                .frame = undefined,
+                .state = .{ .uninit = handle },
+            };
+        }
+
+        pub fn openKeyCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
+            const obj_store = @ptrCast(*ObjectStore, this);
+            const handle = obj_store.object_store_open_key_cursor(query, @enumToInt(direction));
+            cursor.* = .{
+                .frame = undefined,
+                .state = .{ .uninit = handle },
+            };
+        }
+    };
 
     pub const Transaction = opaque {
         pub extern "indexeddb" fn transaction_abort(this: *@This()) void;
@@ -339,8 +357,14 @@ pub const IndexedDB = opaque {
         frame: anyframe,
         state: State,
 
+        pub const RequestHandle = opaque {
+            pub extern "indexeddb" fn cursor_request_init(this: *@This(), successCb: SuccessFn, userdata: ?*anyopaque) void;
+
+            const SuccessFn = fn (?*anyopaque, ?*Object, ?*Object, ?*Handle) callconv(.C) void;
+        };
+
         pub const Handle = opaque {
-            pub extern "indexeddb" fn cursor_continue(this: *@This()) void;
+            pub extern "indexeddb" fn cursor_continue(this: *@This(), successCb: fn (?*anyopaque, ?*Object, ?*Object, ?*Handle) callconv(.C) void, userdata: ?*anyopaque) void;
             pub extern "indexeddb" fn cursor_get_key_u32(this: *@This()) u32;
         };
 
@@ -366,11 +390,15 @@ pub const IndexedDB = opaque {
             const this = @ptrCast(*@This(), @alignCast(@alignOf(@This()), userdata.?));
             std.debug.assert((nextKey != null) == (newHandle != null));
 
-            if (nextKey) |key| {
+            if (this.state == .going) {
+                handle_free(this.state.going.handle);
+            }
+
+            if (newHandle) |new_handle| {
                 this.state = .{ .going = .{
-                    .key = key,
+                    .handle = new_handle,
+                    .key = nextKey.?,
                     .value = nextValue,
-                    .handle = newHandle.?,
                 } };
             } else {
                 this.state = .done;
@@ -379,11 +407,11 @@ pub const IndexedDB = opaque {
         }
 
         const State = union(enum) {
-            uninit: void,
+            uninit: *RequestHandle,
             going: struct {
+                handle: *Cursor.Handle,
                 key: *Object,
                 value: ?*Object,
-                handle: *Cursor.Handle,
             },
             done: void,
         };
@@ -395,11 +423,16 @@ pub const IndexedDB = opaque {
 
         pub fn next(this: *@This()) ?Entry {
             this.frame = @frame();
+            std.log.debug("hello, world {any}", .{this.state});
             switch (this.state) {
-                .uninit => unreachable,
+                .uninit => |rh| {
+                    suspend {
+                        rh.cursor_request_init(Cursor.success, this);
+                    }
+                },
                 .going => |g| {
                     suspend {
-                        g.handle.cursor_continue();
+                        g.handle.cursor_continue(Cursor.success, this);
                     }
                 },
                 .done => {},

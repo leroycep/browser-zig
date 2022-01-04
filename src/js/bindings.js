@@ -561,39 +561,27 @@ export function getWASMImports(getInstanceExports, mixins) {
         };
       },
 
-      object_store_open_cursor(
-        objectStoreHandle,
-        queryHandle,
-        directionInt,
-        successCbIdx,
-        userdata
-      ) {
-        object_store_open_cursor_fn(
+      object_store_open_cursor(objectStoreHandle, queryHandle, directionInt) {
+        return object_store_open_cursor_fn(
           getInstanceExports(),
           false,
           objectStoreHandle,
           queryHandle,
-          directionInt,
-          successCbIdx,
-          userdata
+          directionInt
         );
       },
 
       object_store_open_key_cursor(
         objectStoreHandle,
         queryHandle,
-        directionInt,
-        successCbIdx,
-        userdata
+        directionInt
       ) {
-        object_store_open_cursor_fn(
+        return object_store_open_cursor_fn(
           getInstanceExports(),
           true,
           objectStoreHandle,
           queryHandle,
-          directionInt,
-          successCbIdx,
-          userdata
+          directionInt
         );
       },
 
@@ -621,9 +609,39 @@ export function getWASMImports(getInstanceExports, mixins) {
         );
       },
 
+      object_store_index(objectStoreHandle, namePtr, nameLen) {
+        const objectStore = handles[objectStoreHandle];
+        const name = readStr(namePtr, nameLen);
+
+        const index = objectStore.index(name);
+
+        return makeHandle(index, objectStoreHandle);
+      },
+
+      cursor_request_init(cursorRequestHandle, successCbIdx, userdata) {
+        const cursor_request = handles[cursorRequestHandle];
+        console.log(cursor_request);
+        cursor_request.onsuccess = (event) => {
+          const new_cursor = event.target.result;
+          const success_cb =
+            getInstanceExports().__indirect_function_table.get(successCbIdx);
+          console.log(new_cursor);
+          if (new_cursor) {
+            const new_cursor_handle = makeHandle(new_cursor);
+            const key_handle = makeHandle(new_cursor.key, new_cursor_handle);
+            const value_handle = makeHandle(
+              new_cursor.value,
+              new_cursor_handle
+            );
+            success_cb(userdata, key_handle, value_handle, new_cursor_handle);
+          } else {
+            success_cb(userdata, null, null, null);
+          }
+        };
+      },
+
       cursor_continue(cursorHandle) {
         const cursor = handles[cursorHandle];
-        freeHandle(cursorHandle);
         cursor.continue();
       },
 
@@ -634,49 +652,36 @@ export function getWASMImports(getInstanceExports, mixins) {
   };
 }
 
+function directionIntToString(x) {
+  switch (x) {
+    case 0:
+      return "next";
+    case 1:
+      return "nextunique";
+    case 2:
+      return "prev";
+    case 3:
+      return "prevunique";
+  }
+}
+
 function object_store_open_cursor_fn(
   instanceExports,
   isKeyCursor,
   objectStoreHandle,
   queryHandle,
-  directionInt,
-  successCbIdx,
-  userdata
+  directionInt
 ) {
   const objectStore = handles[objectStoreHandle];
   const query = queryHandle === 0 ? handles[queryHandle] : null;
-
-  const directionIntToString = (x) => {
-    switch (x) {
-      case 0:
-        return "next";
-      case 1:
-        return "nextunique";
-      case 2:
-        return "prev";
-      case 3:
-        return "prevunique";
-    }
-  };
   const dir = directionIntToString(directionInt);
 
   const request = isKeyCursor
     ? objectStore.openKeyCursor(query, dir)
     : objectStore.openCursor(query, dir);
 
-  request.onsuccess = (event) => {
-    const cursor = event.target.result;
-    const success_cb =
-      instanceExports.__indirect_function_table.get(successCbIdx);
-    if (cursor) {
-      const cursor_handle = makeHandle(cursor);
-      const key_handle = makeHandle(cursor.key, cursor_handle);
-      const value_handle = cursor.value
-        ? makeHandle(cursor.value, cursor_handle)
-        : null;
-      success_cb(userdata, key_handle, value_handle, cursor_handle);
-    } else {
-      success_cb(userdata, null, null, null);
-    }
-  };
+  const cursor_request_handle = makeHandle(request, objectStoreHandle);
+  console.log(cursor_request_handle, request);
+
+  return cursor_request_handle;
 }
