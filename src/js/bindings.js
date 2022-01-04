@@ -3,6 +3,7 @@ let handles = {};
 let child_handles = {};
 
 export function makeHandle(obj, parentHandle) {
+  if (obj === null) return 0;
   const handle = next_handle;
   next_handle += 4;
   handles[handle] = obj;
