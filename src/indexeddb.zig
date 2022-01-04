@@ -176,7 +176,6 @@ pub const IndexedDB = opaque {
         };
 
         pub fn createIndex(this: *@This(), name: []const u8, keyPath: []const u8, options: CreateIndexOptions) !*Index {
-            std.log.debug("{s}:{} createIndex", .{ @src().file, @src().line });
             if (!options.isDefault()) {
                 var json_buf: [100]u8 = undefined;
                 var json_fbs = std.io.fixedBufferStream(&json_buf);
@@ -190,7 +189,6 @@ pub const IndexedDB = opaque {
                 };
                 const json = json_fbs.getWritten();
 
-                std.log.debug("{s}:{} json = {s}", .{ @src().file, @src().line, json });
                 const handle = try jserr.errcodeMaybe(this.object_store_create_index(
                     name.ptr,
                     name.len,
@@ -202,7 +200,6 @@ pub const IndexedDB = opaque {
 
                 return @intToPtr(*Index, @intCast(u32, handle));
             } else {
-                std.log.debug("{s}:{} createIndex", .{ @src().file, @src().line });
                 const handle = try jserr.errcodeMaybe(this.object_store_create_index(
                     name.ptr,
                     name.len,
@@ -212,7 +209,6 @@ pub const IndexedDB = opaque {
                     0,
                 ));
 
-                std.log.debug("{s}:{} handle = {x}", .{ @src().file, @src().line, handle });
                 return @intToPtr(*Index, @intCast(u32, handle));
             }
         }
@@ -303,7 +299,6 @@ pub const IndexedDB = opaque {
         pub fn openCursor(this: *@This(), cursor: *Cursor, query: ?*Object, direction: Cursor.Direction) void {
             const obj_store = @ptrCast(*ObjectStore, this);
             const handle = obj_store.object_store_open_cursor(query, @enumToInt(direction));
-            std.log.debug("handle {*}", .{handle});
             cursor.* = .{
                 .frame = undefined,
                 .state = .{ .uninit = handle },
@@ -423,7 +418,6 @@ pub const IndexedDB = opaque {
 
         pub fn next(this: *@This()) ?Entry {
             this.frame = @frame();
-            std.log.debug("hello, world {any}", .{this.state});
             switch (this.state) {
                 .uninit => |rh| {
                     suspend {
