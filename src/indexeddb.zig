@@ -445,4 +445,35 @@ pub const IndexedDB = opaque {
             }
         }
     };
+
+    pub const KeyRange = opaque {
+        pub extern "indexeddb" fn keyrange_lower_bound(lower: *const Object, excludeLower: bool) *KeyRange;
+        pub extern "indexeddb" fn keyrange_upper_bound(upper: *const Object, excludeUpper: bool) *KeyRange;
+        pub extern "indexeddb" fn keyrange_bound(lower: *const Object, upper: *const Object, excludeLower: bool, excludeUpper: bool) *KeyRange;
+        pub extern "indexeddb" fn keyrange_only(only: *const Object) *KeyRange;
+
+        pub fn free(this: *@This()) void {
+            handle_free(this);
+        }
+
+        pub fn asObject(this: *@This()) *Object {
+            return @ptrCast(*Object, this);
+        }
+
+        pub fn bound(lower: *const Object, upper: ?*const Object, excludeLower: bool, excludeUpper: bool) *@This() {
+            return keyrange_bound(lower, upper, excludeLower, excludeUpper);
+        }
+
+        pub fn lowerBound(lower: *const Object, excludeKey: bool) *@This() {
+            return keyrange_lower_bound(lower, excludeKey);
+        }
+
+        pub fn upperBound(upper: *const Object, excludeKey: bool) *@This() {
+            return keyrange_upper_bound(upper, excludeKey);
+        }
+
+        pub fn only(onlyKey: *const Object) *@This() {
+            return keyrange_only(onlyKey);
+        }
+    };
 };

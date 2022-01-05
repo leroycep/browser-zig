@@ -652,6 +652,26 @@ export function getWASMImports(getInstanceExports, mixins) {
       cursor_get_key_u32(cursorHandle) {
         return handles[cursorHandle].key;
       },
+
+      keyrange_lower_bound(lower, excludeLower) {
+        return makeHandle(IDBKeyRange.lowerBound(handles[lower], excludeLower));
+      },
+      keyrange_upper_bound(upper, excludeUpper) {
+        return makeHandle(IDBKeyRange.upperBound(handles[upper], excludeUpper));
+      },
+      keyrange_bound(lower, upper, excludeLower, excludeUpper) {
+        return makeHandle(
+          IDBKeyRange.bound(
+            handles[lower],
+            handles[upper],
+            excludeLower,
+            excludeUpper
+          )
+        );
+      },
+      keyrange_only(only) {
+        return makeHandle(IDBKeyRange.only(handles[only]));
+      },
     },
   };
 }
