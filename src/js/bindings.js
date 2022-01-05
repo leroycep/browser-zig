@@ -268,6 +268,15 @@ export function getWASMImports(getInstanceExports, mixins) {
         return makeHandle(object[name], handle);
       },
 
+      object_set_as_i64(handle, int64) {
+        handles[handle] = int64;
+      },
+
+      object_set_as_i54(handle, int54) {
+        handles[handle] = Number(int54);
+      },
+
+
       object_as_str(handle, bufPtr, bufLen) {
         const object = handles[handle];
         return writeStr(bufPtr, bufLen, object);

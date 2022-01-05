@@ -12,6 +12,9 @@ pub const Object = opaque {
     pub extern fn object_get_str(*@This(), namePtr: [*]const u8, nameLen: usize, bufPtr: [*]u8, bufLen: usize) isize;
     pub extern fn object_get_object(*@This(), namePtr: [*]const u8, nameLen: usize) *Object;
 
+    pub extern fn object_set_as_i64(*@This(), i64) void;
+    pub extern fn object_set_as_i54(*@This(), i64) void;
+
     pub extern fn object_as_i64(*@This()) i64;
     pub extern fn object_as_str(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
     pub extern fn object_as_json(*@This(), bufPtr: [*]u8, bufLen: usize) isize;
@@ -48,6 +51,14 @@ pub const Object = opaque {
         const len = this.object_get_str(name.ptr, name.len, buf.ptr, buf.len);
         if (len < 0) return error.OutOfMemory;
         return buf[0..@intCast(usize, len)];
+    }
+
+    pub fn setAsInt64(this: *@This(), val: i64) void {
+        return this.object_set_as_i64(val);
+    }
+
+    pub fn setAsInt54(this: *@This(), val: i54) void {
+        return this.object_set_as_i54(val);
     }
 
     pub fn asInt64(this: *@This()) i64 {
