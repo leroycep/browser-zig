@@ -460,7 +460,7 @@ pub const IndexedDB = opaque {
             return @ptrCast(*Object, this);
         }
 
-        pub fn bound(lower: *const Object, upper: ?*const Object, excludeLower: bool, excludeUpper: bool) *@This() {
+        pub fn bound(lower: *const Object, upper: *const Object, excludeLower: bool, excludeUpper: bool) *@This() {
             return keyrange_bound(lower, upper, excludeLower, excludeUpper);
         }
 
